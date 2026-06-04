@@ -485,7 +485,7 @@ with tab1:
             name=lt, mode='lines',
             line=dict(color=c, width=2),
             fill='tozeroy',
-            fillcolor=c.replace('#', 'rgba(') + ',0.06)' if c.startswith('#') else c,
+            fillcolor='rgba({},{},{},0.06)'.format(int(c[1:3],16),int(c[3:5],16),int(c[5:7],16)) if c.startswith('#') else c,
             hovertemplate=f"<b>{lt}</b><br>%{{x|%d %b}}: %{{y:,.0f}} kWh<extra></extra>"
         ))
     fig1.update_layout(**PLOT_LAYOUT, height=360,
