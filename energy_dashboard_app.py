@@ -269,7 +269,7 @@ LT_COLORS = {
 # ═══════════════════════════════════════════════════════════════════════════
 # DATA LOADING
 # ═══════════════════════════════════════════════════════════════════════════
-UPLOAD_PATH = "/mnt/user-data/uploads/Daily_Load_Report_May-26.xlsx"
+UPLOAD_PATH = os.path.join(os.path.dirname(__file__), "Daily_Load_Report_May-26.xlsx")
 
 @st.cache_data
 def load_data(path):
@@ -331,10 +331,10 @@ with st.sidebar:
     st.markdown("---")
 
     st.markdown("**TARIFF SETTINGS**")
-    blended_rate = st.number_input("Blended Rate (Rs/kWh)", value=22.38, step=0.01, format="%.2f",
-                                    help="Overall cost including solar offset")
-    lesco_rate   = st.number_input("LESCO Grid Rate (Rs/kWh)", value=46.00, step=0.01, format="%.2f",
-                                    help="Pure LESCO grid cost without solar")
+    blended_rate = st.number_input("Blended Rate — All Sources (Rs/kWh)", value=22.38, step=0.01, format="%.2f",
+                                    help="Blended cost across LESCO + Solar + Gas Engine")
+    lesco_rate   = st.number_input("LESCO-Only Rate (Rs/kWh)", value=46.00, step=0.01, format="%.2f",
+                                    help="Pure LESCO tariff — used to calculate savings vs grid-only")
     st.markdown("---")
 
     st.markdown("**FILTERS**")
@@ -401,9 +401,9 @@ k1.metric("Total Grid Consumption", f"{total_kwh:,.0f} kWh",
 k2.metric("Total Solar Generated", f"{total_solar:,.0f} kWh",
           delta=f"{avg_offset:.1f}% avg offset")
 k3.metric("Actual Cost (Blended)", f"Rs {total_cost/1e6:.2f}M",
-          delta=f"@ Rs {blended_rate}/kWh")
+          delta=f"Blended: LESCO + Solar + Gas @ Rs {blended_rate}")
 k4.metric("Solar Savings vs LESCO", f"Rs {total_savings/1e6:.2f}M",
-          delta=f"vs Rs {lesco_rate}/kWh grid")
+          delta=f"Savings vs LESCO-only @ Rs {lesco_rate}")
 k5.metric("Peak Consumption Day", peak_day,
           delta=f"{peak_kwh:,.0f} kWh")
 
@@ -541,9 +541,9 @@ with tab3:
         ).reset_index().sort_values('actual', ascending=False)
         fig_c1 = go.Figure()
         fig_c1.add_trace(go.Bar(x=lt_cost['lt'], y=lt_cost['lesco']/1000,
-                                name='Without Solar (LESCO)', marker_color='#3a1a1a'))
+                                name='Without Solar/Gas (LESCO-only)', marker_color='#3a1a1a'))
         fig_c1.add_trace(go.Bar(x=lt_cost['lt'], y=lt_cost['actual']/1000,
-                                name='Actual (Blended)', marker_color='#00d4ff'))
+                                name='Actual (All Sources Blended)', marker_color='#00d4ff'))
         fig_c1.update_layout(**PLOT_LAYOUT, barmode='overlay', height=340,
                              title=dict(text="Actual vs Without-Solar Cost per LT (Rs '000)", font=dict(color='#e8eaf0', size=12, family='Syne')),
                              xaxis_tickangle=-30,
@@ -660,8 +660,8 @@ def generate_pdf(report_df, lt_list, title_str, blended, lesco):
     story.append(Paragraph("Tariff Settings", h2_style))
     tariff_data = [
         ['Parameter', 'Value'],
-        ['Blended Rate (Grid + Solar)', f'Rs {blended:.2f} / kWh'],
-        ['LESCO Grid Rate', f'Rs {lesco:.2f} / kWh'],
+        ['Blended Rate (LESCO + Solar + Gas Engine)', f'Rs {blended:.2f} / kWh'],
+        ['LESCO-Only Rate (benchmark)', f'Rs {lesco:.2f} / kWh'],
         ['LTs Covered', ', '.join(lt_list)],
     ]
     t_tariff = Table(tariff_data, colWidths=[W*0.45, W*0.55])
