@@ -467,7 +467,7 @@ st.markdown("<br>", unsafe_allow_html=True)
 # ═══════════════════════════════════════════════════════════════════════════
 # TABS
 # ═══════════════════════════════════════════════════════════════════════════
-tab1, tab2, tab3, tab4 = st.tabs(["📈  TRENDS", "☀  SOLAR ANALYSIS", "💰  COST IMPACT", "📋  DATA TABLE"])
+tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs(["📈  TRENDS", "☀  SOLAR ANALYSIS", "💰  COST IMPACT", "📋  DATA TABLE", "🤖  ANOMALY DETECTION", "📊  FORECAST", "📝  AI REPORT"])
 
 # ─── TAB 1: TRENDS ───────────────────────────────────────────────────────
 with tab1:
@@ -648,6 +648,397 @@ st.markdown("<br>", unsafe_allow_html=True)
 st.markdown("---")
 
 # ═══════════════════════════════════════════════════════════════════════════
+# AI HELPER
+# ═══════════════════════════════════════════════════════════════════════════
+import json, numpy as np
+
+def call_claude(system_prompt, user_prompt, max_tokens=2000):
+    import urllib.request, urllib.error
+    payload = json.dumps({
+        "model": "claude-sonnet-4-20250514",
+        "max_tokens": max_tokens,
+        "system": system_prompt,
+        "messages": [{"role": "user", "content": user_prompt}]
+    }).encode()
+    req = urllib.request.Request(
+        "https://api.anthropic.com/v1/messages",
+        data=payload,
+        headers={"Content-Type": "application/json", "anthropic-version": "2023-06-01"},
+        method="POST"
+    )
+    try:
+        with urllib.request.urlopen(req) as resp:
+            data = json.loads(resp.read())
+        return data["content"][0]["text"]
+    except urllib.error.HTTPError as e:
+        return f"API Error {e.code}: {e.read().decode()}"
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+# ═══════════════════════════════════════════════════════════════════════════
+# AI TABS (5, 6, 7)
+# ═══════════════════════════════════════════════════════════════════════════
+
+# ─── TAB 5: ANOMALY DETECTION ────────────────────────────────────────────
+with tab5:
+    st.markdown('<p class="section-header">AI Anomaly Detection</p>', unsafe_allow_html=True)
+    st.markdown("""
+    <p style="color:#8892a4;font-size:0.82rem;margin-bottom:18px;">
+    AI analyzes each LT's daily consumption, flags statistically unusual days,
+    and explains what likely caused each anomaly in engineering terms.
+    </p>""", unsafe_allow_html=True)
+
+    a_col1, a_col2 = st.columns([2,1])
+    with a_col1:
+        anomaly_lts = st.multiselect("Select LTs to analyze", ALL_LTS, default=ALL_LTS[:3], key="anom_lts")
+    with a_col2:
+        sensitivity = st.selectbox("Sensitivity", ["Low (2σ)", "Medium (1.5σ)", "High (1σ)"], index=1)
+        sigma_map = {"Low (2σ)": 2.0, "Medium (1.5σ)": 1.5, "High (1σ)": 1.0}
+        sigma = sigma_map[sensitivity]
+
+    if st.button("🤖 Run Anomaly Detection", key="run_anomaly"):
+        if not anomaly_lts:
+            st.warning("Select at least one LT.")
+        else:
+            # Statistical detection
+            anomalies = []
+            for lt in anomaly_lts:
+                lt_data = fdf[fdf['lt'] == lt].sort_values('date')
+                if lt_data.empty or len(lt_data) < 5:
+                    continue
+                mean_kwh = lt_data['main_kwh'].mean()
+                std_kwh  = lt_data['main_kwh'].std()
+                if std_kwh == 0:
+                    continue
+                for _, row in lt_data.iterrows():
+                    z = (row['main_kwh'] - mean_kwh) / std_kwh
+                    if abs(z) >= sigma:
+                        anomalies.append({
+                            'lt': lt,
+                            'date': row['date'].strftime('%d %b %Y'),
+                            'kwh': row['main_kwh'],
+                            'mean_kwh': round(mean_kwh, 0),
+                            'z_score': round(z, 2),
+                            'direction': 'HIGH' if z > 0 else 'LOW'
+                        })
+
+            if not anomalies:
+                st.info("No anomalies detected at this sensitivity level. Try increasing sensitivity.")
+            else:
+                # Show chart with anomaly markers
+                fig_a = go.Figure()
+                for lt in anomaly_lts:
+                    lt_data = fdf[fdf['lt'] == lt].sort_values('date')
+                    if lt_data.empty: continue
+                    c = LT_COLORS.get(lt, '#aaaaaa')
+                    fig_a.add_trace(go.Scatter(
+                        x=lt_data['date'], y=lt_data['main_kwh'],
+                        name=lt, mode='lines',
+                        line=dict(color=c, width=1.5),
+                        hovertemplate=f"<b>{lt}</b><br>%{{x|%d %b}}: %{{y:,.0f}} kWh<extra></extra>"
+                    ))
+                # Add anomaly markers
+                anom_df_plot = pd.DataFrame(anomalies)
+                for _, a in anom_df_plot.iterrows():
+                    color = '#ff4444' if a['direction'] == 'HIGH' else '#ffab40'
+                    fig_a.add_trace(go.Scatter(
+                        x=[pd.to_datetime(a['date'], format='%d %b %Y')],
+                        y=[a['kwh']],
+                        mode='markers',
+                        marker=dict(color=color, size=12, symbol='circle', line=dict(color='white', width=1.5)),
+                        name=f"⚠ {a['lt']} {a['date']}",
+                        showlegend=False,
+                        hovertemplate=f"<b>ANOMALY — {a['lt']}</b><br>{a['date']}: {a['kwh']:,.0f} kWh<br>z={a['z_score']}<extra></extra>"
+                    ))
+                fig_a.update_layout(**PLOT_LAYOUT, height=340,
+                                    title=dict(text="Consumption with Anomaly Flags (red=high, amber=low)",
+                                               font=dict(color='#e8eaf0', size=12, family='Syne')))
+                st.plotly_chart(fig_a, use_container_width=True)
+
+                st.markdown(f'<p class="section-header">Found {len(anomalies)} Anomalies — AI Analysis</p>', unsafe_allow_html=True)
+
+                # Build data summary for AI
+                anom_summary = json.dumps(anomalies, indent=2)
+                lt_stats = {}
+                for lt in anomaly_lts:
+                    lt_data = fdf[fdf['lt'] == lt]
+                    if not lt_data.empty:
+                        lt_stats[lt] = {
+                            'mean_kwh': round(lt_data['main_kwh'].mean(), 0),
+                            'min_kwh':  round(lt_data['main_kwh'].min(), 0),
+                            'max_kwh':  round(lt_data['main_kwh'].max(), 0),
+                            'total_days': len(lt_data)
+                        }
+
+                with st.spinner("AI analyzing anomalies..."):
+                    ai_response = call_claude(
+                        system_prompt="""You are a Senior Electrical Engineer at a textile manufacturing plant (NeelaBlue Denim Unit, Sapphire Fibres).
+You analyze power consumption anomalies across LT substations.
+Your job: for each anomaly, provide a concise engineering explanation of likely causes.
+Format your response as a structured list. For each anomaly:
+- **[Date] — [LT Name] — [HIGH/LOW] — [kWh] kWh (z={z_score})**
+  Likely cause: [1-2 sentence engineering explanation based on the LT type and direction]
+  Action: [brief recommended action]
+
+Consider: Weaving LTs power looms (high base load), Finishing LT has sanforizing/washing machines, Rebeaming LT has winding/creel machines, Sizing LT has sizing machines and kitchen, Utility LTs have boilers/compressors/chillers.
+Be specific, use engineering terminology. No generic responses.""",
+                        user_prompt=f"""Anomalies detected (sigma threshold={sigma}):
+{anom_summary}
+
+LT baseline stats:
+{json.dumps(lt_stats, indent=2)}
+
+Analyze each anomaly and explain probable engineering causes.""",
+                        max_tokens=2000
+                    )
+
+                st.markdown(f"""
+                <div style="background:#0d1220;border:1px solid #1e2a42;border-radius:12px;padding:20px 24px;
+                            font-family:'DM Sans',sans-serif;font-size:0.85rem;line-height:1.7;color:#c0c8d8;">
+                {ai_response.replace(chr(10), '<br>').replace('**', '<b>').replace('**', '</b>')}
+                </div>""", unsafe_allow_html=True)
+
+                # Raw anomaly table
+                st.markdown("<br>", unsafe_allow_html=True)
+                anom_display = pd.DataFrame(anomalies)
+                anom_display.columns = ['LT','Date','kWh','Avg kWh','Z-Score','Type']
+                anom_display['Type'] = anom_display['Type'].apply(lambda x: '🔴 HIGH' if x=='HIGH' else '🟡 LOW')
+                st.dataframe(anom_display, use_container_width=True)
+
+# ─── TAB 6: FORECAST ─────────────────────────────────────────────────────
+with tab6:
+    st.markdown('<p class="section-header">AI Consumption Forecast</p>', unsafe_allow_html=True)
+    st.markdown("""
+    <p style="color:#8892a4;font-size:0.82rem;margin-bottom:18px;">
+    Linear trend + 7-day rolling forecast per LT with confidence bands.
+    AI interprets the forecast and flags any LTs showing concerning trends.
+    </p>""", unsafe_allow_html=True)
+
+    f_col1, f_col2 = st.columns([2,1])
+    with f_col1:
+        forecast_lts = st.multiselect("Select LTs to forecast", ALL_LTS, default=ALL_LTS[:4], key="fore_lts")
+    with f_col2:
+        forecast_days = st.slider("Forecast horizon (days)", 3, 14, 7)
+
+    if st.button("📊 Generate Forecast", key="run_forecast"):
+        if not forecast_lts:
+            st.warning("Select at least one LT.")
+        else:
+            from numpy.polynomial import polynomial as P
+
+            fig_f = go.Figure()
+            forecast_results = {}
+
+            for lt in forecast_lts:
+                lt_data = fdf[fdf['lt'] == lt].sort_values('date').reset_index(drop=True)
+                if lt_data.empty or len(lt_data) < 7: continue
+                c = LT_COLORS.get(lt, '#aaaaaa')
+
+                x = np.arange(len(lt_data))
+                y = lt_data['main_kwh'].values
+
+                # Linear regression
+                coeffs = np.polyfit(x, y, 1)
+                trend_line = np.polyval(coeffs, x)
+                residuals = y - trend_line
+                std_resid = residuals.std()
+
+                # Forecast future points
+                x_future = np.arange(len(lt_data), len(lt_data) + forecast_days)
+                y_future = np.polyval(coeffs, x_future)
+                y_upper  = y_future + 1.5 * std_resid
+                y_lower  = np.maximum(y_future - 1.5 * std_resid, 0)
+
+                last_date = lt_data['date'].max()
+                future_dates = pd.date_range(last_date + pd.Timedelta(days=1), periods=forecast_days)
+
+                # Actual line
+                fig_f.add_trace(go.Scatter(
+                    x=lt_data['date'], y=lt_data['main_kwh'],
+                    name=lt, mode='lines',
+                    line=dict(color=c, width=2),
+                    hovertemplate=f"<b>{lt}</b><br>%{{x|%d %b}}: %{{y:,.0f}} kWh<extra></extra>"
+                ))
+                # Forecast line
+                fig_f.add_trace(go.Scatter(
+                    x=future_dates, y=y_future,
+                    name=f"{lt} forecast", mode='lines',
+                    line=dict(color=c, width=2, dash='dash'),
+                    showlegend=False,
+                    hovertemplate=f"<b>{lt} FORECAST</b><br>%{{x|%d %b}}: %{{y:,.0f}} kWh<extra></extra>"
+                ))
+                # Confidence band
+                r_hex = c[1:3]; g_hex = c[3:5]; b_hex = c[5:7]
+                rgba_fill = f"rgba({int(r_hex,16)},{int(g_hex,16)},{int(b_hex,16)},0.1)"
+                fig_f.add_trace(go.Scatter(
+                    x=list(future_dates) + list(future_dates[::-1]),
+                    y=list(y_upper) + list(y_lower[::-1]),
+                    fill='toself', fillcolor=rgba_fill,
+                    line=dict(color='rgba(0,0,0,0)'),
+                    showlegend=False, hoverinfo='skip'
+                ))
+
+                forecast_results[lt] = {
+                    'trend_slope': round(float(coeffs[0]), 1),
+                    'avg_kwh': round(float(y.mean()), 0),
+                    'forecast_7d_avg': round(float(y_future.mean()), 0),
+                    'forecast_next': round(float(y_future[0]), 0),
+                    'direction': 'increasing' if coeffs[0] > 50 else 'decreasing' if coeffs[0] < -50 else 'stable'
+                }
+
+            # Add vertical divider line
+            last_actual = fdf['date'].max()
+            fig_f.add_vline(x=last_actual, line_dash="dot", line_color="#4a5568",
+                            annotation_text="Forecast →", annotation_font_color="#4a5568")
+            fig_f.update_layout(**PLOT_LAYOUT, height=380,
+                                title=dict(text=f"Consumption Trend + {forecast_days}-Day Forecast (dashed)",
+                                           font=dict(color='#e8eaf0', size=12, family='Syne')))
+            st.plotly_chart(fig_f, use_container_width=True)
+
+            # Forecast summary table
+            fc_rows = []
+            for lt, v in forecast_results.items():
+                arrow = "↑" if v['direction'] == 'increasing' else "↓" if v['direction'] == 'decreasing' else "→"
+                fc_rows.append([lt, f"{v['avg_kwh']:,.0f}", f"{v['forecast_next']:,.0f}",
+                                 f"{v['forecast_7d_avg']:,.0f}", f"{v['trend_slope']:+.1f} kWh/day", arrow + " " + v['direction']])
+            fc_df = pd.DataFrame(fc_rows, columns=['LT','May Avg kWh','Tomorrow','7-Day Avg','Trend Slope','Direction'])
+            st.dataframe(fc_df, use_container_width=True)
+
+            # AI interpretation
+            st.markdown('<p class="section-header">AI Forecast Interpretation</p>', unsafe_allow_html=True)
+            with st.spinner("AI analyzing forecast..."):
+                ai_fc = call_claude(
+                    system_prompt="""You are a Senior Electrical Engineer at NeelaBlue Denim Unit, Sapphire Fibres.
+You interpret energy consumption forecasts for LT substations.
+Write a concise professional commentary (4-6 paragraphs) covering:
+1. Overall plant consumption trend heading into next week
+2. Which LTs show concerning increasing trends and why (in context of textile operations)
+3. Which LTs show healthy/stable patterns
+4. Estimated cost impact of the forecasted consumption (use blended rate provided)
+5. One actionable recommendation per concerning LT
+Use engineering terminology. Be specific, not generic.""",
+                    user_prompt=f"""Forecast results for {forecast_days}-day horizon:
+{json.dumps(forecast_results, indent=2)}
+
+Blended tariff: Rs {blended_rate}/kWh
+LESCO tariff: Rs {lesco_rate}/kWh
+
+Provide a professional engineering interpretation.""",
+                    max_tokens=1800
+                )
+
+            st.markdown(f"""
+            <div style="background:#0d1220;border:1px solid #1e2a42;border-radius:12px;padding:20px 24px;
+                        font-family:'DM Sans',sans-serif;font-size:0.85rem;line-height:1.7;color:#c0c8d8;">
+            {ai_fc.replace(chr(10), '<br>')}
+            </div>""", unsafe_allow_html=True)
+
+# ─── TAB 7: AI REPORT ────────────────────────────────────────────────────
+with tab7:
+    st.markdown('<p class="section-header">AI Executive Report Generator</p>', unsafe_allow_html=True)
+    st.markdown("""
+    <p style="color:#8892a4;font-size:0.82rem;margin-bottom:18px;">
+    AI writes a full engineering commentary for the selected LTs and period,
+    then embeds it into the PDF report alongside charts and data tables.
+    </p>""", unsafe_allow_html=True)
+
+    r_col1, r_col2 = st.columns(2)
+    with r_col1:
+        report_lts_ai = st.multiselect("LTs to include in report", ALL_LTS, default=ALL_LTS, key="rpt_lts")
+        report_title  = st.text_input("Report Title", value="Energy Intelligence Report — May 2026", key="rpt_title")
+    with r_col2:
+        report_sections = st.multiselect(
+            "Sections to include",
+            ["Executive Summary", "LT-wise Analysis", "Solar Performance", "Cost Analysis", "Anomaly Review", "Recommendations"],
+            default=["Executive Summary", "LT-wise Analysis", "Solar Performance", "Cost Analysis", "Recommendations"]
+        )
+
+    if st.button("📝 Generate AI Report", key="gen_report"):
+        if not report_lts_ai:
+            st.warning("Select at least one LT.")
+        else:
+            rpt_df = df[
+                (df['lt'].isin(report_lts_ai)) &
+                (df['date'] >= start_day) &
+                (df['date'] <= end_day)
+            ].copy()
+            rpt_df['actual_cost']   = rpt_df['main_kwh'] * blended_rate
+            rpt_df['lesco_cost']    = rpt_df['main_kwh'] * lesco_rate
+            rpt_df['solar_savings'] = rpt_df['solar_kwh'] * (lesco_rate - blended_rate)
+
+            # Build data summary for AI
+            lt_summary = rpt_df.groupby('lt').agg(
+                grid=('main_kwh','sum'), solar=('solar_kwh','sum'),
+                cost=('actual_cost','sum'), savings=('solar_savings','sum')
+            ).reset_index()
+            lt_summary['offset_pct'] = (lt_summary['solar'] / lt_summary['grid'] * 100).round(1)
+            lt_summary['peak_day'] = rpt_df.groupby('lt')['main_kwh'].max().values
+
+            plant_total_kwh  = rpt_df['main_kwh'].sum()
+            plant_total_solar= rpt_df['solar_kwh'].sum()
+            plant_total_cost = rpt_df['actual_cost'].sum()
+            plant_savings    = rpt_df['solar_savings'].sum()
+            days_covered     = (end_day - start_day).days + 1
+
+            data_for_ai = {
+                "report_period": f"1–{date_range[1]} May 2026 ({days_covered} days)",
+                "lts_covered": report_lts_ai,
+                "tariffs": {"blended": blended_rate, "lesco_only": lesco_rate},
+                "plant_totals": {
+                    "grid_kwh": round(plant_total_kwh, 0),
+                    "solar_kwh": round(plant_total_solar, 0),
+                    "avg_solar_offset_pct": round(plant_total_solar/plant_total_kwh*100, 1) if plant_total_kwh > 0 else 0,
+                    "total_cost_rs": round(plant_total_cost, 0),
+                    "solar_savings_rs": round(plant_savings, 0),
+                },
+                "lt_breakdown": lt_summary.to_dict(orient='records'),
+                "sections_requested": report_sections
+            }
+
+            with st.spinner("AI generating report narrative..."):
+                ai_narrative = call_claude(
+                    system_prompt="""You are a Senior Electrical Engineer writing an official monthly energy report for NeelaBlue Denim Unit, Sapphire Fibres Limited, Lahore.
+Write a professional, detailed engineering report narrative covering the requested sections.
+Format with clear section headings using markdown (## for sections, ### for subsections).
+Be specific with numbers, percentages, and engineering observations.
+Highlight concerns, achievements, and actionable recommendations.
+Tone: professional engineering report, suitable for presentation to GM Engineering and management.
+Use proper engineering terminology for textile/denim manufacturing equipment.""",
+                    user_prompt=f"""Generate the report narrative based on this data:
+{json.dumps(data_for_ai, indent=2, default=str)}
+
+Sections requested: {report_sections}
+Write a comprehensive engineering report.""",
+                    max_tokens=2500
+                )
+
+            # Show narrative in app
+            st.markdown('<p class="section-header">AI-Generated Narrative Preview</p>', unsafe_allow_html=True)
+            st.markdown(f"""
+            <div style="background:#0d1220;border:1px solid #1e2a42;border-radius:12px;padding:24px 28px;
+                        font-family:'DM Sans',sans-serif;font-size:0.85rem;line-height:1.8;color:#c0c8d8;
+                        max-height:500px;overflow-y:auto;">
+            {ai_narrative.replace(chr(10), '<br>')}
+            </div>""", unsafe_allow_html=True)
+
+            st.markdown("<br>", unsafe_allow_html=True)
+
+            # Generate PDF with AI narrative
+            with st.spinner("Building PDF with AI narrative..."):
+                pdf_buf = generate_pdf_ai(
+                    rpt_df, report_lts_ai, report_title,
+                    blended_rate, lesco_rate, ai_narrative, report_sections
+                )
+
+            fname = f"AI_Energy_Report_{datetime.now().strftime('%d%m%Y_%H%M%S')}.pdf"
+            st.download_button(
+                label="📥 Download AI Report PDF",
+                data=pdf_buf,
+                file_name=fname,
+                mime="application/pdf"
+            )
+
+# ═══════════════════════════════════════════════════════════════════════════
 # PDF GENERATION
 # ═══════════════════════════════════════════════════════════════════════════
 def make_mpl_chart(dates, series_dict, title, ylabel, colors_map, height_in=2.8):
@@ -674,15 +1065,8 @@ def make_mpl_chart(dates, series_dict, title, ylabel, colors_map, height_in=2.8)
     buf.seek(0)
     return buf
 
-def generate_pdf(report_df, lt_list, title_str, blended, lesco):
-    buf = io.BytesIO()
-    doc = SimpleDocTemplate(buf, pagesize=A4,
-                            leftMargin=18*mm, rightMargin=18*mm,
-                            topMargin=18*mm, bottomMargin=18*mm)
-    W = A4[0] - 36*mm
 
-    # ── Styles ──
-    base = getSampleStyleSheet()
+def _pdf_styles():
     title_style = ParagraphStyle('ptitle', fontName='Helvetica-Bold',
                                   fontSize=18, textColor=colors.HexColor('#e8eaf0'),
                                   spaceAfter=2, alignment=TA_LEFT)
@@ -692,6 +1076,9 @@ def generate_pdf(report_df, lt_list, title_str, blended, lesco):
     h2_style    = ParagraphStyle('ph2', fontName='Helvetica-Bold',
                                   fontSize=11, textColor=colors.HexColor('#00d4ff'),
                                   spaceBefore=14, spaceAfter=4)
+    h3_style    = ParagraphStyle('ph3', fontName='Helvetica-Bold',
+                                  fontSize=9.5, textColor=colors.HexColor('#ffab40'),
+                                  spaceBefore=10, spaceAfter=3)
     body_style  = ParagraphStyle('pbody', fontName='Helvetica',
                                   fontSize=8.5, textColor=colors.HexColor('#c0c8d8'),
                                   leading=13)
@@ -701,98 +1088,101 @@ def generate_pdf(report_df, lt_list, title_str, blended, lesco):
     val_style   = ParagraphStyle('pval', fontName='Helvetica-Bold',
                                   fontSize=13, textColor=colors.HexColor('#e8eaf0'),
                                   alignment=TA_CENTER)
+    return title_style, sub_style, h2_style, h3_style, body_style, label_style, val_style
 
-    story = []
 
-    # ── Cover Header ──
-    story.append(Paragraph(title_str, title_style))
-    story.append(Paragraph(
-        f"Sapphire Fibres Limited · NeelaBlue Denim Unit · Generated {datetime.now().strftime('%d %b %Y, %H:%M')}",
-        sub_style))
-    story.append(HRFlowable(width=W, thickness=1, color=colors.HexColor('#1e2a42'), spaceAfter=10))
-
-    # ── Tariff Info ──
-    story.append(Paragraph("Tariff Settings", h2_style))
-    tariff_data = [
-        ['Parameter', 'Value'],
-        ['Blended Rate (LESCO + Solar + Gas Engine)', f'Rs {blended:.2f} / kWh'],
-        ['LESCO-Only Rate (benchmark)', f'Rs {lesco:.2f} / kWh'],
-        ['LTs Covered', ', '.join(lt_list)],
-    ]
-    t_tariff = Table(tariff_data, colWidths=[W*0.45, W*0.55])
-    t_tariff.setStyle(TableStyle([
+def _table_style_dark(has_total=False):
+    style = [
         ('BACKGROUND',   (0,0), (-1,0),  colors.HexColor('#0d2240')),
         ('TEXTCOLOR',    (0,0), (-1,0),  colors.HexColor('#00d4ff')),
         ('FONTNAME',     (0,0), (-1,0),  'Helvetica-Bold'),
-        ('FONTSIZE',     (0,0), (-1,-1), 8),
+        ('FONTSIZE',     (0,0), (-1,-1), 7.5),
         ('BACKGROUND',   (0,1), (-1,-1), colors.HexColor('#111827')),
         ('TEXTCOLOR',    (0,1), (-1,-1), colors.HexColor('#c0c8d8')),
-        ('GRID',         (0,0), (-1,-1), 0.5, colors.HexColor('#1e2a42')),
         ('ROWBACKGROUNDS',(0,1),(-1,-1), [colors.HexColor('#111827'), colors.HexColor('#0d1220')]),
-        ('LEFTPADDING',  (0,0), (-1,-1), 8),
-        ('RIGHTPADDING', (0,0), (-1,-1), 8),
-        ('TOPPADDING',   (0,0), (-1,-1), 5),
-        ('BOTTOMPADDING',(0,0), (-1,-1), 5),
-    ]))
-    story.append(t_tariff)
-    story.append(Spacer(1, 10))
-
-    # ── Summary KPIs per LT ──
-    story.append(Paragraph("LT-wise Summary", h2_style))
-    lt_sum = report_df.groupby('lt').agg(
-        grid=('main_kwh','sum'),
-        solar=('solar_kwh','sum'),
-        actual=('actual_cost','sum'),
-        savings=('solar_savings','sum')
-    ).reset_index()
-    lt_sum['offset_pct'] = (lt_sum['solar'] / lt_sum['grid'] * 100).clip(0,200).round(1)
-
-    kpi_data = [['LT Substation', 'Grid (kWh)', 'Solar (kWh)', 'Offset %', 'Cost (Rs)', 'Savings (Rs)']]
-    for _, row in lt_sum.iterrows():
-        kpi_data.append([
-            row['lt'],
-            f"{row['grid']:,.0f}",
-            f"{row['solar']:,.0f}",
-            f"{row['offset_pct']:.1f}%",
-            f"{row['actual']:,.0f}",
-            f"{row['savings']:,.0f}",
-        ])
-    total_row = [
-        'TOTAL',
-        f"{lt_sum['grid'].sum():,.0f}",
-        f"{lt_sum['solar'].sum():,.0f}",
-        f"{lt_sum['solar'].sum()/lt_sum['grid'].sum()*100:.1f}%",
-        f"{lt_sum['actual'].sum():,.0f}",
-        f"{lt_sum['savings'].sum():,.0f}",
-    ]
-    kpi_data.append(total_row)
-
-    col_w = [W*0.28, W*0.13, W*0.13, W*0.1, W*0.18, W*0.18]
-    t_kpi = Table(kpi_data, colWidths=col_w)
-    t_kpi.setStyle(TableStyle([
-        ('BACKGROUND',   (0,0), (-1,0),  colors.HexColor('#0d2240')),
-        ('TEXTCOLOR',    (0,0), (-1,0),  colors.HexColor('#00d4ff')),
-        ('FONTNAME',     (0,0), (-1,0),  'Helvetica-Bold'),
-        ('FONTNAME',     (0,-1),(-1,-1), 'Helvetica-Bold'),
-        ('BACKGROUND',   (0,-1),(-1,-1), colors.HexColor('#0d2240')),
-        ('TEXTCOLOR',    (0,-1),(-1,-1), colors.HexColor('#00e676')),
-        ('FONTSIZE',     (0,0), (-1,-1), 7.5),
-        ('BACKGROUND',   (0,1), (-1,-2), colors.HexColor('#111827')),
-        ('TEXTCOLOR',    (0,1), (-1,-2), colors.HexColor('#c0c8d8')),
-        ('ROWBACKGROUNDS',(0,1),(-1,-2), [colors.HexColor('#111827'), colors.HexColor('#0d1220')]),
         ('GRID',         (0,0), (-1,-1), 0.4, colors.HexColor('#1e2a42')),
         ('ALIGN',        (1,0), (-1,-1), 'RIGHT'),
         ('LEFTPADDING',  (0,0), (-1,-1), 7),
         ('RIGHTPADDING', (0,0), (-1,-1), 7),
         ('TOPPADDING',   (0,0), (-1,-1), 5),
         ('BOTTOMPADDING',(0,0), (-1,-1), 5),
-    ]))
-    story.append(t_kpi)
-    story.append(Spacer(1, 14))
+    ]
+    if has_total:
+        style += [
+            ('FONTNAME',   (0,-1),(-1,-1), 'Helvetica-Bold'),
+            ('BACKGROUND', (0,-1),(-1,-1), colors.HexColor('#0d2240')),
+            ('TEXTCOLOR',  (0,-1),(-1,-1), colors.HexColor('#00e676')),
+        ]
+    return TableStyle(style)
 
-    # ── Charts per LT ──
-    dates_all = sorted(report_df['date'].unique())
 
+def generate_pdf_ai(report_df, lt_list, title_str, blended, lesco, ai_narrative, sections):
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4,
+                            leftMargin=18*mm, rightMargin=18*mm,
+                            topMargin=18*mm, bottomMargin=18*mm)
+    W = A4[0] - 36*mm
+    title_style, sub_style, h2_style, h3_style, body_style, label_style, val_style = _pdf_styles()
+    story = []
+
+    # ── Cover ──
+    story.append(Paragraph(title_str, title_style))
+    story.append(Paragraph(
+        f"Sapphire Fibres Limited · NeelaBlue Denim Unit · Generated {datetime.now().strftime('%d %b %Y, %H:%M')}",
+        sub_style))
+    story.append(Paragraph(
+        f"LTs Covered: {', '.join(lt_list)} · Blended Rs {blended}/kWh · LESCO Rs {lesco}/kWh",
+        sub_style))
+    story.append(HRFlowable(width=W, thickness=1, color=colors.HexColor('#1e2a42'), spaceAfter=10))
+
+    # ── Plant Summary KPIs ──
+    lt_sum = report_df.groupby('lt').agg(
+        grid=('main_kwh','sum'), solar=('solar_kwh','sum'),
+        cost=('actual_cost','sum'), savings=('solar_savings','sum')
+    ).reset_index()
+    lt_sum['offset_pct'] = (lt_sum['solar'] / lt_sum['grid'] * 100).clip(0,200).round(1)
+
+    story.append(Paragraph("Plant Summary", h2_style))
+    kpi_data = [['LT Substation', 'Grid (kWh)', 'Solar (kWh)', 'Offset %', 'Cost (Rs)', 'Savings (Rs)']]
+    for _, row in lt_sum.iterrows():
+        kpi_data.append([row['lt'], f"{row['grid']:,.0f}", f"{row['solar']:,.0f}",
+                         f"{row['offset_pct']:.1f}%", f"{row['cost']:,.0f}", f"{row['savings']:,.0f}"])
+    kpi_data.append(['TOTAL',
+                     f"{lt_sum['grid'].sum():,.0f}", f"{lt_sum['solar'].sum():,.0f}",
+                     f"{lt_sum['solar'].sum()/max(lt_sum['grid'].sum(),1)*100:.1f}%",
+                     f"{lt_sum['cost'].sum():,.0f}", f"{lt_sum['savings'].sum():,.0f}"])
+    t = Table(kpi_data, colWidths=[W*0.28,W*0.13,W*0.13,W*0.1,W*0.18,W*0.18])
+    t.setStyle(_table_style_dark(has_total=True))
+    story.append(t)
+    story.append(Spacer(1, 12))
+
+    # ── AI Narrative ──
+    story.append(Paragraph("AI Engineering Analysis", h2_style))
+    story.append(HRFlowable(width=W, thickness=0.5, color=colors.HexColor('#1e2a42'), spaceAfter=6))
+
+    # Parse markdown headings into reportlab paragraphs
+    for line in ai_narrative.split('\n'):
+        line = line.strip()
+        if not line:
+            story.append(Spacer(1, 4))
+        elif line.startswith('### '):
+            story.append(Paragraph(line[4:], h3_style))
+        elif line.startswith('## '):
+            story.append(Paragraph(line[3:], h2_style))
+        elif line.startswith('# '):
+            story.append(Paragraph(line[2:], h2_style))
+        elif line.startswith('- ') or line.startswith('* '):
+            story.append(Paragraph(f"• {line[2:]}", body_style))
+        elif line.startswith('**') and line.endswith('**'):
+            story.append(Paragraph(f"<b>{line[2:-2]}</b>", body_style))
+        else:
+            # Handle inline bold
+            line = line.replace('**', '<b>', 1)
+            while '**' in line:
+                line = line.replace('**', '</b>', 1)
+            story.append(Paragraph(line, body_style))
+
+    # ── Per-LT charts ──
     for lt in lt_list:
         story.append(PageBreak())
         story.append(Paragraph(f"LT Detail: {lt}", h2_style))
@@ -800,19 +1190,17 @@ def generate_pdf(report_df, lt_list, title_str, blended, lesco):
 
         lt_df = report_df[report_df['lt'] == lt].sort_values('date')
         if lt_df.empty:
-            story.append(Paragraph("No data for this LT in selected range.", body_style))
+            story.append(Paragraph("No data.", body_style))
             continue
 
-        # Mini KPIs
-        g  = lt_df['main_kwh'].sum()
-        s  = lt_df['solar_kwh'].sum()
-        ac = lt_df['actual_cost'].sum()
-        sv = lt_df['solar_savings'].sum()
+        g = lt_df['main_kwh'].sum(); s = lt_df['solar_kwh'].sum()
+        ac = lt_df['actual_cost'].sum(); sv = lt_df['solar_savings'].sum()
         op = s/g*100 if g > 0 else 0
+
         kpi_mini = [
-            [Paragraph('Grid Consumed', label_style), Paragraph('Solar Generated', label_style),
-             Paragraph('Solar Offset %', label_style), Paragraph('Actual Cost', label_style),
-             Paragraph('Solar Savings', label_style)],
+            [Paragraph('Grid', label_style), Paragraph('Solar', label_style),
+             Paragraph('Offset %', label_style), Paragraph('Cost', label_style),
+             Paragraph('Savings', label_style)],
             [Paragraph(f"{g:,.0f} kWh", val_style), Paragraph(f"{s:,.0f} kWh", val_style),
              Paragraph(f"{op:.1f}%", val_style), Paragraph(f"Rs {ac:,.0f}", val_style),
              Paragraph(f"Rs {sv:,.0f}", val_style)],
@@ -826,116 +1214,87 @@ def generate_pdf(report_df, lt_list, title_str, blended, lesco):
             ('BOTTOMPADDING',(0,0),(-1,-1),6),
         ]))
         story.append(t_mini)
-        story.append(Spacer(1, 10))
-
-        # Grid + Solar chart
-        lt_dates = lt_df['date'].tolist()
-        grid_vals = lt_df['main_kwh'].tolist()
-        solar_vals = lt_df['solar_kwh'].tolist()
-
-        fig_buf = make_mpl_chart(
-            lt_dates,
-            {'Grid kWh': grid_vals, 'Solar kWh': solar_vals},
-            f"{lt} — Daily Grid & Solar (kWh)",
-            "kWh",
-            {'Grid kWh': '#00d4ff', 'Solar kWh': '#00e676'},
-            height_in=2.6
-        )
-        story.append(RLImage(fig_buf, width=W, height=W*0.36))
         story.append(Spacer(1, 8))
 
-        # Cost chart
-        cost_vals = lt_df['actual_cost'].tolist()
-        sav_vals  = lt_df['solar_savings'].tolist()
+        lt_dates = lt_df['date'].tolist()
+        fig_buf = make_mpl_chart(
+            lt_dates,
+            {'Grid kWh': lt_df['main_kwh'].tolist(), 'Solar kWh': lt_df['solar_kwh'].tolist()},
+            f"{lt} — Daily Grid & Solar (kWh)", "kWh",
+            {'Grid kWh': '#00d4ff', 'Solar kWh': '#00e676'}, height_in=2.4
+        )
+        story.append(RLImage(fig_buf, width=W, height=W*0.33))
+        story.append(Spacer(1, 6))
+
         fig_buf2 = make_mpl_chart(
             lt_dates,
-            {'Actual Cost (Rs)': cost_vals, 'Solar Savings (Rs)': sav_vals},
-            f"{lt} — Daily Cost & Savings (Rs)",
-            "Rs",
-            {'Actual Cost (Rs)': '#ffab40', 'Solar Savings (Rs)': '#00e676'},
-            height_in=2.6
+            {'Actual Cost (Rs)': lt_df['actual_cost'].tolist(), 'Solar Savings (Rs)': lt_df['solar_savings'].tolist()},
+            f"{lt} — Daily Cost & Savings (Rs)", "Rs",
+            {'Actual Cost (Rs)': '#ffab40', 'Solar Savings (Rs)': '#00e676'}, height_in=2.4
         )
-        story.append(RLImage(fig_buf2, width=W, height=W*0.36))
-        story.append(Spacer(1, 10))
+        story.append(RLImage(fig_buf2, width=W, height=W*0.33))
+        story.append(Spacer(1, 8))
 
-        # Daily data table (compact)
-        story.append(Paragraph("Daily Breakdown", ParagraphStyle('pdaily', fontName='Helvetica-Bold',
-                                fontSize=9, textColor=colors.HexColor('#8892a4'), spaceAfter=4)))
-        tbl_data = [['Date', 'Grid kWh', 'Solar kWh', 'Offset %', 'Cost (Rs)', 'Savings (Rs)']]
+        # Daily table
+        tbl_data = [['Date','Grid kWh','Solar kWh','Offset %','Cost (Rs)','Savings (Rs)']]
         for _, r in lt_df.iterrows():
             op_r = r['solar_kwh']/r['main_kwh']*100 if r['main_kwh'] > 0 else 0
-            tbl_data.append([
-                r['date'].strftime('%d %b'),
-                f"{r['main_kwh']:,.0f}",
-                f"{r['solar_kwh']:,.0f}",
-                f"{op_r:.1f}%",
-                f"{r['actual_cost']:,.0f}",
-                f"{r['solar_savings']:,.0f}",
-            ])
-        t_daily = Table(tbl_data, colWidths=[W*0.13, W*0.15, W*0.15, W*0.12, W*0.22, W*0.23])
-        t_daily.setStyle(TableStyle([
-            ('BACKGROUND',   (0,0), (-1,0),  colors.HexColor('#0d2240')),
-            ('TEXTCOLOR',    (0,0), (-1,0),  colors.HexColor('#00d4ff')),
-            ('FONTNAME',     (0,0), (-1,0),  'Helvetica-Bold'),
-            ('FONTSIZE',     (0,0), (-1,-1), 7),
-            ('BACKGROUND',   (0,1), (-1,-1), colors.HexColor('#111827')),
-            ('TEXTCOLOR',    (0,1), (-1,-1), colors.HexColor('#c0c8d8')),
-            ('ROWBACKGROUNDS',(0,1),(-1,-1), [colors.HexColor('#111827'), colors.HexColor('#0d1220')]),
-            ('GRID',         (0,0), (-1,-1), 0.3, colors.HexColor('#1e2a42')),
-            ('ALIGN',        (1,0), (-1,-1), 'RIGHT'),
-            ('LEFTPADDING',  (0,0), (-1,-1), 5),
-            ('RIGHTPADDING', (0,0), (-1,-1), 5),
-            ('TOPPADDING',   (0,0), (-1,-1), 3),
-            ('BOTTOMPADDING',(0,0), (-1,-1), 3),
-        ]))
-        story.append(t_daily)
+            tbl_data.append([r['date'].strftime('%d %b'), f"{r['main_kwh']:,.0f}",
+                             f"{r['solar_kwh']:,.0f}", f"{op_r:.1f}%",
+                             f"{r['actual_cost']:,.0f}", f"{r['solar_savings']:,.0f}"])
+        t_d = Table(tbl_data, colWidths=[W*0.13,W*0.15,W*0.15,W*0.12,W*0.22,W*0.23])
+        t_d.setStyle(_table_style_dark())
+        story.append(t_d)
 
     doc.build(story)
     buf.seek(0)
     return buf
 
-# ── PDF Button ──────────────────────────────────────────────────────────
-st.markdown('<p class="section-header">Generate PDF Report</p>', unsafe_allow_html=True)
+
+# Keep old generate_pdf for the standalone PDF section
+def generate_pdf(report_df, lt_list, title_str, blended, lesco):
+    return generate_pdf_ai(report_df, lt_list, title_str, blended, lesco, "", [])
+
+# ═══════════════════════════════════════════════════════════════════════════
+# STANDALONE PDF SECTION (below tabs)
+# ═══════════════════════════════════════════════════════════════════════════
+st.markdown('<p class="section-header">Quick PDF Export (No AI Narrative)</p>', unsafe_allow_html=True)
 
 pdf_col1, pdf_col2 = st.columns([3, 1])
 with pdf_col1:
+    pdf_lts_quick = st.multiselect("LTs for quick export", ALL_LTS, default=ALL_LTS, key="quick_pdf_lts")
     st.markdown(f"""
-    <div style="background:#111827; border:1px solid #1e2a42; border-radius:10px; padding:14px 18px;">
-        <span style="color:#8892a4; font-size:0.78rem; letter-spacing:0.08em; text-transform:uppercase;">
-        Selected for report:</span><br>
-        <span style="color:#e8eaf0; font-family:'Syne',sans-serif; font-weight:600;">
-        {len(pdf_lts)} LT{'s' if len(pdf_lts)!=1 else ''} — {pdf_title}</span><br>
-        <span style="color:#4a5568; font-size:0.75rem;">
-        Blended Rs {blended_rate}/kWh · LESCO Rs {lesco_rate}/kWh · 
-        Days {date_range[0]}–{date_range[1]} May 2026</span>
+    <div style="background:#111827; border:1px solid #1e2a42; border-radius:10px; padding:12px 18px; margin-top:8px;">
+        <span style="color:#8892a4; font-size:0.75rem; letter-spacing:0.08em; text-transform:uppercase;">
+        {len(pdf_lts_quick)} LT(s) · Days {date_range[0]}–{date_range[1]} May 2026 · 
+        Blended Rs {blended_rate}/kWh · LESCO Rs {lesco_rate}/kWh</span>
     </div>""", unsafe_allow_html=True)
 
 with pdf_col2:
-    if st.button("⚡ Build PDF Report"):
-        if not pdf_lts:
-            st.error("Select at least one LT for the report.")
+    if st.button("⚡ Export PDF", key="quick_pdf_btn"):
+        if not pdf_lts_quick:
+            st.error("Select at least one LT.")
         else:
-            with st.spinner("Generating report..."):
+            with st.spinner("Building PDF..."):
                 pdf_df = df[
-                    (df['lt'].isin(pdf_lts)) &
+                    (df['lt'].isin(pdf_lts_quick)) &
                     (df['date'] >= start_day) &
                     (df['date'] <= end_day)
                 ].copy()
                 pdf_df['actual_cost']   = pdf_df['main_kwh'] * blended_rate
                 pdf_df['lesco_cost']    = pdf_df['main_kwh'] * lesco_rate
                 pdf_df['solar_savings'] = pdf_df['solar_kwh'] * (lesco_rate - blended_rate)
-                pdf_buf = generate_pdf(pdf_df, pdf_lts, pdf_title, blended_rate, lesco_rate)
-            fname = f"energy_report_may2026_{datetime.now().strftime('%H%M%S')}.pdf"
+                pdf_buf = generate_pdf(pdf_df, pdf_lts_quick, f"Energy Report — May 2026", blended_rate, lesco_rate)
             st.download_button(
                 label="📥 Download PDF",
                 data=pdf_buf,
-                file_name=fname,
+                file_name=f"energy_report_{datetime.now().strftime('%H%M%S')}.pdf",
                 mime="application/pdf"
             )
 
 st.markdown("<br>", unsafe_allow_html=True)
 st.markdown(
-    '<p style="text-align:center; color:#1e2a42; font-size:0.7rem; letter-spacing:0.1em;">'
-    'SAPPHIRE FIBRES · NEELABLUE DENIM UNIT · ENERGY INTELLIGENCE SYSTEM · v1.0</p>',
+    '<p style="text-align:center; color:#1e2a42; font-size:0.7rem; letter-spacing:0.1em;">' +
+    'SAPPHIRE FIBRES · NEELABLUE DENIM UNIT · ENERGY INTELLIGENCE SYSTEM · v2.0</p>',
     unsafe_allow_html=True
 )
