@@ -273,6 +273,7 @@ LT_COLORS = {
 def load_data(file_bytes):
     wb = openpyxl.load_workbook(io.BytesIO(file_bytes), read_only=True)
     records = []
+
     for sheet_name in wb.sheetnames:
         ws = wb[sheet_name]
         date_str = sheet_name.strip()
@@ -280,38 +281,60 @@ def load_data(file_bytes):
             date = datetime.strptime(date_str, "%d-%m-%Y")
         except:
             continue
+
         rows = list(ws.iter_rows(values_only=True))
         current_lt = None
-        lt_main = lt_solar = None
+        lt_main = None
+        lt_solar = None
+
         for row in rows:
-            if row[0] is not None and row[1] is None and isinstance(row[0], str) and len(row[0].strip()) > 0:
-                if current_lt and lt_main is not None:
+            # LT section header: col0 is non-empty string, col1 is None, not a header row
+            if (row[0] is not None and row[1] is None
+                    and isinstance(row[0], str)
+                    and len(row[0].strip()) > 2
+                    and row[0].strip() not in ('Sr .#',)):
+                # Save previous LT before switching
+                if current_lt is not None and lt_main is not None:
                     records.append({
                         'date': date, 'lt': current_lt,
-                        'main_kwh': lt_main or 0,
-                        'solar_kwh': lt_solar or 0
+                        'main_kwh': max(lt_main, 0),
+                        'solar_kwh': max(lt_solar or 0, 0)
                     })
                 current_lt = row[0].strip()
-                lt_main = lt_solar = None
+                lt_main = None
+                lt_solar = None
                 continue
+
             if current_lt is None:
                 continue
+
+            # Main Breaker: always calculate from col D - col E (idx 3, 4)
             if row[1] == 'Main  Breaker':
                 try:
-                    lt_main = (row[3] - row[4]) if isinstance(row[3],(int,float)) and isinstance(row[4],(int,float)) else 0
-                except: lt_main = 0
+                    t, y = row[3], row[4]
+                    lt_main = (t - y) if isinstance(t, (int,float)) and isinstance(y, (int,float)) else 0
+                except:
+                    lt_main = 0
+
+            # Solar row
             if row[1] is not None and 'Solar' in str(row[1]):
                 try:
-                    lt_solar = (row[3] - row[4]) if isinstance(row[3],(int,float)) and isinstance(row[4],(int,float)) else 0
-                except: lt_solar = 0
-        if current_lt and lt_main is not None:
-            records.append({'date': date, 'lt': current_lt,
-                            'main_kwh': lt_main or 0, 'solar_kwh': lt_solar or 0})
+                    t, y = row[3], row[4]
+                    lt_solar = (t - y) if isinstance(t, (int,float)) and isinstance(y, (int,float)) else 0
+                except:
+                    lt_solar = 0
+
+        # Save last LT of sheet
+        if current_lt is not None and lt_main is not None:
+            records.append({
+                'date': date, 'lt': current_lt,
+                'main_kwh': max(lt_main, 0),
+                'solar_kwh': max(lt_solar or 0, 0)
+            })
+
     df = pd.DataFrame(records)
-    # Normalize LT names
     df['lt'] = df['lt'].str.strip()
     df.loc[df['lt'] == 'Finishing LT', 'lt'] = 'FINISHING LT'
-    df.loc[df['lt'] == 'Utility AIR COMPRESSOR LT', 'lt'] = 'Utility AIR COMPRESSOR LT'
     df['main_kwh'] = df['main_kwh'].clip(lower=0)
     df['solar_kwh'] = df['solar_kwh'].clip(lower=0)
     df = df.sort_values('date').reset_index(drop=True)
