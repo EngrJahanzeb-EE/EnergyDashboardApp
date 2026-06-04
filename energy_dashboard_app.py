@@ -317,35 +317,41 @@ def load_data(file_bytes):
     df = df.sort_values('date').reset_index(drop=True)
     return df
 
-# ── File uploader (shown before anything else if no file yet) ──
-LOCAL_PATH = os.path.join(os.path.dirname(__file__), "Daily_Load_Report_May-26.xlsx")
-
+# ── File uploader ──
 uploaded_file = st.sidebar.file_uploader(
     "📂 Upload Load Report (.xlsx)",
     type=["xlsx"],
     help="Upload your Daily Load Report Excel file"
 )
 
-if uploaded_file is not None:
-    file_bytes = uploaded_file.read()
-elif os.path.exists(LOCAL_PATH):
-    with open(LOCAL_PATH, "rb") as f:
-        file_bytes = f.read()
-else:
+if uploaded_file is None:
     st.markdown("""
-    <div style="background:#111827;border:1px solid #1e2a42;border-radius:14px;
-                padding:40px;text-align:center;margin-top:60px;">
-        <p style="font-family:Syne,sans-serif;font-size:1.5rem;color:#e8eaf0;font-weight:700;">
-            ⚡ Upload Your Load Report</p>
-        <p style="color:#8892a4;font-size:0.9rem;">
-            Use the <b style="color:#00d4ff;">📂 Upload Load Report</b> button in the sidebar<br>
-            to upload your <code>Daily_Load_Report.xlsx</code> file and begin analysis.
-        </p>
+    <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;
+                min-height:60vh;text-align:center;">
+        <div style="background:#111827;border:1px solid #1e2a42;border-radius:18px;
+                    padding:56px 64px;max-width:520px;">
+            <p style="font-size:2.8rem;margin:0 0 16px;">⚡</p>
+            <p style="font-family:Syne,sans-serif;font-size:1.6rem;color:#e8eaf0;
+                      font-weight:800;margin:0 0 10px;letter-spacing:-0.02em;">
+                Energy Intelligence</p>
+            <p style="color:#4a5568;font-size:0.8rem;letter-spacing:0.1em;
+                      text-transform:uppercase;margin:0 0 24px;">
+                Sapphire Fibres · NeelaBlue Denim Unit</p>
+            <div style="background:#0d1220;border:1px dashed #1e3a5a;border-radius:10px;
+                        padding:20px 24px;margin-bottom:0;">
+                <p style="color:#00d4ff;font-size:0.85rem;margin:0 0 6px;font-weight:600;">
+                    📂 Upload your Daily Load Report</p>
+                <p style="color:#8892a4;font-size:0.78rem;margin:0;">
+                    Use the uploader in the sidebar to get started.<br>
+                    Supports any month's Excel report.
+                </p>
+            </div>
+        </div>
     </div>
     """, unsafe_allow_html=True)
     st.stop()
 
-df = load_data(bytes(file_bytes))
+df = load_data(uploaded_file.read())
 ALL_LTS = sorted(df['lt'].unique().tolist())
 
 # ═══════════════════════════════════════════════════════════════════════════
