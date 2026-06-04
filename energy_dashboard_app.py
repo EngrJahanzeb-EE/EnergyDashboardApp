@@ -269,11 +269,9 @@ LT_COLORS = {
 # ═══════════════════════════════════════════════════════════════════════════
 # DATA LOADING
 # ═══════════════════════════════════════════════════════════════════════════
-UPLOAD_PATH = os.path.join(os.path.dirname(__file__), "Daily_Load_Report_May-26.xlsx")
-
 @st.cache_data
-def load_data(path):
-    wb = openpyxl.load_workbook(path, read_only=True)
+def load_data(file_bytes):
+    wb = openpyxl.load_workbook(io.BytesIO(file_bytes), read_only=True)
     records = []
     for sheet_name in wb.sheetnames:
         ws = wb[sheet_name]
@@ -319,7 +317,35 @@ def load_data(path):
     df = df.sort_values('date').reset_index(drop=True)
     return df
 
-df = load_data(UPLOAD_PATH)
+# ── File uploader (shown before anything else if no file yet) ──
+LOCAL_PATH = os.path.join(os.path.dirname(__file__), "Daily_Load_Report_May-26.xlsx")
+
+uploaded_file = st.sidebar.file_uploader(
+    "📂 Upload Load Report (.xlsx)",
+    type=["xlsx"],
+    help="Upload your Daily Load Report Excel file"
+)
+
+if uploaded_file is not None:
+    file_bytes = uploaded_file.read()
+elif os.path.exists(LOCAL_PATH):
+    with open(LOCAL_PATH, "rb") as f:
+        file_bytes = f.read()
+else:
+    st.markdown("""
+    <div style="background:#111827;border:1px solid #1e2a42;border-radius:14px;
+                padding:40px;text-align:center;margin-top:60px;">
+        <p style="font-family:Syne,sans-serif;font-size:1.5rem;color:#e8eaf0;font-weight:700;">
+            ⚡ Upload Your Load Report</p>
+        <p style="color:#8892a4;font-size:0.9rem;">
+            Use the <b style="color:#00d4ff;">📂 Upload Load Report</b> button in the sidebar<br>
+            to upload your <code>Daily_Load_Report.xlsx</code> file and begin analysis.
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+    st.stop()
+
+df = load_data(bytes(file_bytes))
 ALL_LTS = sorted(df['lt'].unique().tolist())
 
 # ═══════════════════════════════════════════════════════════════════════════
